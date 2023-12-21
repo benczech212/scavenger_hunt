@@ -4,105 +4,104 @@ import soundfile as sf
 import os
 import threading
 from pathlib import Path
-from  gtp_client import *
+from api_manager import *
+import text_voice_converter as tvc
+import random
+
+
+google_ai_api_key = open_api_key_file(GOOGLE_AI_API_KEY_PATH)
+open_ai_api_key = open_api_key_file(OPENAI_API_KEY_PATH)
 
 # Set your OpenAI API key here
-openai.api_key = get_api_key()
+openai.api_key = open_ai_api_key
 
 VOICE_FOLDER = "voices"
+DEFAULT_VOICE = "onyx"
+
 stop_recording = False
 
-def create_assistant(instructions, name, model="gpt-4"):
-    assistant = openai.ChatCompletion.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": instructions},
-        ],
-        max_tokens=1500,
-    )
-    return assistant["id"]
+ASSISTANT_NAME = "Merlin Mystique"
+USER_NAME = "Sabrina"
 
-def text_to_voice(text, file_name="assistant_voice"):
-    response = openai.TextToSpeech.create(
-        text=text,
-        model="tts-1",
-        voice="alloy",
-    )
-    file_path = os.path.join(VOICE_FOLDER, f"{file_name}.mp3")
-    response.stream_to_file(file_path)
-    return file_path
+SUCCESS_LINK = "https://drive.google.com/file/d/1-xhSU_C2lo-i1VOGJrxQ1Ioss3RbABWi/view?usp=sharing"
+SOUNDS_PATH = 'sounds'
+SUCCESS_SOUND_PATH = os.path.join(SOUNDS_PATH,'success_sound.mp3')
 
-def play_audio(file_path):
-    os.system(f"start {file_path}")
+RECORD_DURATION_SEC = 10
 
-def record_audio(file_name="user_input", input_device=None):
-    local_dir_path = VOICE_FOLDER
-    local_file_path = os.path.join(local_dir_path, f"{file_name}.wav")
-    if not os.path.exists(local_dir_path):
-        os.mkdir(local_dir_path)
-    if input_device is None:
-        input_device = sd.default.device["input"]
+SOLVED = False
+gemini = create_gemini_client()
+answers = ["little penguin", "christmas tree", "the color purple"]
 
-    print("Recording... Press Enter to stop.")
+initial_prompt = [
+    f"""You are a wizard shop owner named {ASSISTANT_NAME}. Only talk on the behalf of {ASSISTANT_NAME}. My name is {USER_NAME}
+    You are to give me riddles that she is to complete. The first should be easy, the second one hard, and the third one even harder.
+    I love English, alliteration, logic, and fantasy. Remind me that I can ask for clues and hints at any time.
+    Only let me advance if I answer the riddle correctly. If I answer incorrectly, I should be able to try again as many times as I want, or move on for now. So long as I complete all three ridles, I should be able to advance.
+    Don't let me know the answers even if I ask. Wait for me to ask you the first question before responding.
+    don't say your own name when you answer. Don't ever speak for {USER_NAME}, only talk as {ASSISTANT_NAME}.
+    The first answer should {answers[0]}. The second answer should be a {answers[1]}. The third answer should be very hard, you get to pick what the answer is.
+    Only once I have solved 3 riddles can you reveal the secret link {SUCCESS_LINK}.
+    the rest of the conversation will be with the user."""]
+conversation = initial_prompt[0]
+success_prompt = f"I hope you wrote that down, as you will need it to advance. Otherwise you can start over... Just kidding, the link has been saved to your computer next to this magical script. Haha, I love you... Uhh! I mean Ben loves you! I mean... uhh... you know what I mean. Not awkward at all. Okay goodbye {USER_NAME}!"
+success_audio = tvc.create_speech_from_text(success_prompt, name="success")
+stop_idle_sound_flag = threading.Event()
+def pick_random_waiting_sound():
+    waiting_sounds = ["sounds/waiting_sound_1.mp3", "sounds/waiting_sound_2.mp3", "sounds/waiting_sound_3.mp3"]
+    return random.choice(waiting_sounds)
 
-    # Create a thread to run the recording in the background
-    recording_thread = threading.Thread(target=start_recording, args=(local_file_path, input_device))
-    recording_thread.start()
 
-    # Wait for the user to press Enter to stop recording
-    input("Press Enter to stop recording.\n")
+# Modify the WAITING_SOUND_PATH assignment in your code
+WAITING_SOUND_PATH = pick_random_waiting_sound()
 
-    # Signal the recording thread to stop
-    global stop_recording
-    stop_recording = True
-    recording_thread.join()
 
-    print(f"Recording saved to {local_file_path}")
-    return local_file_path
+def play_waiting_sound():
+    tvc.play_audio(pick_random_waiting_sound(), stop_flag=stop_idle_sound_flag)
 
-def start_recording(file_path, input_device):
-    global stop_recording
-    stop_recording = False
 
-    # Record audio until stop_recording is set to True
-    with sd.InputStream(device=input_device, channels=1, dtype="int16") as stream:
-        audio_data = []
-        while not stop_recording:
-            block, overflowed = stream.read(1024)
-            audio_data.extend(block)
+def conversation_loop():
+    global conversation
+    global SOLVED
+    print(f"Waiting sound path: {WAITING_SOUND_PATH}")
+    
+    
+    response_number = 0
+    while not SOLVED:
 
-        # Convert audio_data to NumPy array
-        audio_data = np.array(audio_data)
+        user_voice_file_path = tvc.record_audio(name=f"user_voice_{response_number}",duration=RECORD_DURATION_SEC)
+            
+        # Start the waiting sound in a separate thread
+        waiting_sound_thread = threading.Thread(target=play_waiting_sound)
+        waiting_sound_thread.start()
 
-        sf.write(file_path, audio_data, stream.samplerate)
+        user_text = tvc.voice_to_text(user_voice_file_path)
+        print(user_text)
+        conversation += f"{USER_NAME}: {user_text}\n\n"
+        assistant_text = gemini.generate_content(conversation)
+        
+        # Stop the waiting sound thread
+        stop_idle_sound_flag.set()
+        waiting_sound_thread.join()
+        
+        print(assistant_text.text)
+        conversation += f"{ASSISTANT_NAME}: {assistant_text.text}\n\n"
+        agent_dialog = assistant_text.text.replace(f"{ASSISTANT_NAME}:", "")
+        agent_voice_file_path = tvc.create_speech_from_text(agent_dialog, name=f"agent_voice_{response_number}")
+        tvc.play_audio(agent_voice_file_path, stop_flag=None)
+        
+        if SUCCESS_LINK in assistant_text.text:
+            SOLVED = True
+            
+            tvc.play_audio(success_audio, stop_flag=None)
+            tvc.play_audio(SUCCESS_SOUND_PATH, stop_flag=None)
+            print("Congratulations! You have solved the riddles and found the secret link!")
+            with open("solved_link.txt", "w") as file:
+                file.write(SUCCESS_LINK)
+            print(f"The link has been saved to solved_link.txt in case you lose the link above ;)")
+            pause = input("Press enter to close...")
+            break
 
-def main():
-    instructions = "You are a wizard shop owner. I will be connecting you with Sabrina, my beautiful girlfriend. You are to give her riddles that she is to complete. The first should be easy, the second one hard, and the third one even harder. She loves English, alliteration, logic, and fantasy. Let her know she can ask for clues and hints. Don't let her know the answers even if she asks. When she gets all three correct, reveal the secret link {result_link}. Wait for her to ask you the first question before responding."
-    assistant_id = create_assistant(instructions, "Merlin Mystique")
-
-    assistant_voice_text = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "assistant", "content": "Hello, I am Merlin Mystique."},
-        ],
-        max_tokens=1500,
-    )["choices"][0]["message"]["content"]
-
-    assistant_voice_file = text_to_voice(assistant_voice_text, "assistant_voice")
-    play_audio(assistant_voice_file)
-
-    input("Press Enter when ready to start recording.\n")
-
-    user_input_file = record_audio("user_input")
-    user_input_text = openai.TextToSpeech.create(
-        file=Path(user_input_file).open("rb"),
-        model="whisper-1",
-        voice="hush",
-    )["text"]
-
-    # Send user_input_text to assistant and continue the conversation...
-    print(user_input_text)
 
 if __name__ == "__main__":
-    main()
+    conversation_loop()

@@ -1,6 +1,7 @@
 from pydub import AudioSegment
 from pydub.playback import play
-import pygame
+from pygame import mixer
+import time
 from pathlib import Path
 from openai import OpenAI
 import os
@@ -40,24 +41,19 @@ def create_speech_from_text(text, model="tts-1", voice=DEFAULT_VOICE, name="agen
     
     return local_file_path
 
-def play_audio(file_path):
-    print(f"Playing audio {file_path}")
+def play_audio(file_path, stop_flag=None):
+    mixer.init()
+    mixer.music.load(file_path)
+    mixer.music.play()
 
-    pygame.mixer.init()
-    pygame.mixer.music.load(file_path)
-    pygame.mixer.music.play()
-
-    while pygame.mixer.music.get_busy():
-        pygame.time.Clock().tick(10)
-
-    # Clean up Pygame mixer
-    pygame.mixer.quit()
-
-    # Ensure the file is closed before removing it
-    try:
-        os.remove(file_path)
-    except PermissionError:
-        pass
+    if stop_flag is None:
+        # If stop_flag is not provided, wait for the audio to finish playing
+        while mixer.music.get_busy():
+            time.sleep(0.1)
+    else:
+        # If stop_flag is provided, wait for the flag to be set
+        while not stop_flag.is_set():
+            time.sleep(0.1)
 
 def list_audio_devices():
     print("Available audio devices:")
@@ -90,7 +86,8 @@ def voice_to_text(file_path, model="whisper-1", name="user_input"):
     file=audio_file,
     response_format="text"
     )
-    print(transcript)
+
+    return transcript
     
 
 # Get text from chatbot
@@ -100,9 +97,9 @@ def voice_to_text(file_path, model="whisper-1", name="user_input"):
 # play_audio(agent_voice_file)
 
 # Get voice from user
-user_voice_file_path = record_audio("user_input", duration=5)
-user_text = voice_to_text(user_voice_file_path)
-print(user_text)
+# user_voice_file_path = record_audio("user_input", duration=5)
+# user_text = voice_to_text(user_voice_file_path)
+# print(user_text)
 
 
 
