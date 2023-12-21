@@ -7,7 +7,7 @@ results_link = "https://drive.google.com/file/d/1-xhSU_C2lo-i1VOGJrxQ1Ioss3RbABW
 assistant_name = "Merlin Mystique"
 user_name = "Sabrina"
 
-with open('/etc/GOOGLEAI_API_KEY', 'r') as file:
+with open('e:\dev\api_keys\GOOGLEAI_API_KEY', 'r') as file:
     api_key = file.read().strip()
 genai.configure(api_key=api_key)
 
